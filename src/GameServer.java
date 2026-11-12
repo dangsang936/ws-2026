@@ -65,34 +65,58 @@ public class GameServer implements Net.Handler {
         broadcastOnline();
     }
 
-    // TODO 1 -- OPEN A SESSION, then reply to that one client only:
-    //   read:    String name = Net.str(msg, "name");  read "group" the same way
-    //   number:  long uid = lastUid.incrementAndGet();
-    //   session: sessions.put(client, new Session(uid, name.trim(), group.trim()));
-    //   packet:  {"cmd":"login","uid":1,"name":"An","group":"nhom-3"}
-    //   send:    build a JsonObject, then client.send(...)  -- handleBroadcast() below is the model
-    //   last:    call broadcastOnline() so everyone sees the new count.
-    // TODO 2 -- FIELD MISSING, NO SESSION:
-    //   "name" null or empty  -> client.send(error(MISSING_NAME));  return;
-    //   "group" null or empty -> client.send(error(MISSING_GROUP)); return;
+    // login: check name and group, open a session, answer the caller, update the online count.
     void handleLogin(Net.Client client, JsonObject msg) {
+        String name  = Net.str(msg, "name");
+        String group = Net.str(msg, "group");
+        if (name == null || name.trim().isEmpty()) {
+            client.send(error(MISSING_NAME));
+            return;
+        }
+        if (group == null || group.trim().isEmpty()) {
+            client.send(error(MISSING_GROUP));
+            return;
+        }
+        long uid = lastUid.incrementAndGet();
+        Session s = new Session(uid, name.trim(), group.trim());
+        sessions.put(client, s);
+        JsonObject out = new JsonObject();
+        out.addProperty("cmd", "login");
+        out.addProperty("uid", s.uid);
+        out.addProperty("name", s.name);
+        out.addProperty("group", s.group);
+        client.send(out.toString());
+        broadcastOnline();
     }
 
-    // TODO 3 -- WHO IS ON THIS CONNECTION? The packet carries nothing but the cmd,
-    //   so the answer has to come out of the session the login left behind:
-    //   Session s = sessions.get(client);
-    //   no session -> client.send(error(NOT_LOGGED_IN)); return;
-    //   packet:  {"cmd":"getUserInfo","uid":1,"name":"An","group":"nhom-3","seconds":12}
-    //   seconds: s.seconds() -- how long this session has been open.
+    // getUserInfo: answer from the session this connection opened, not from the packet.
     void handleGetUserInfo(Net.Client client) {
+        Session s = sessions.get(client);
+        if (s == null) {
+            client.send(error(NOT_LOGGED_IN));
+            return;
+        }
+        JsonObject out = new JsonObject();
+        out.addProperty("cmd", "getUserInfo");
+        out.addProperty("uid", s.uid);
+        out.addProperty("name", s.name);
+        out.addProperty("group", s.group);
+        out.addProperty("seconds", s.seconds());
+        client.send(out.toString());
     }
 
-    // TODO 4 -- CLOSE THE SESSION, keep the connection open:
-    //   no session -> client.send(error(NOT_LOGGED_IN)); return;
-    //   remove it:  sessions.remove(client)
-    //   packet:     {"cmd":"logout","uid":1}   then broadcastOnline();
-    //   after this a "getUserInfo" on the same connection must answer error again.
+    // logout: close the session but keep the connection open.
     void handleLogout(Net.Client client) {
+        Session s = sessions.remove(client);
+        if (s == null) {
+            client.send(error(NOT_LOGGED_IN));
+            return;
+        }
+        JsonObject out = new JsonObject();
+        out.addProperty("cmd", "logout");
+        out.addProperty("uid", s.uid);
+        client.send(out.toString());
+        broadcastOnline();
     }
 
     // The error packet every handler sends when a request is wrong.
